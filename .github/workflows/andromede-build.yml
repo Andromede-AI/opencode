@@ -1,7 +1,6 @@
 name: Andromede OpenCode
 on:
   push:
-    branches: [andromede]
     tags: ['v*-andromede.*']
   workflow_dispatch:
 permissions:

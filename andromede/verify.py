@@ -1,4 +1,6 @@
 import json
+import contextlib
+import signal
 import os
 import subprocess
 import sys
@@ -59,14 +61,23 @@ def verify(binary, tmp_path, retries, expected):
         },
     }
     try:
-        result = subprocess.run(
+        process = subprocess.Popen(
             [str(binary), "run", "--model", "retrytest/mock", "--format", "json", "Say hello."],
             cwd=tmp_path,
             env=environment,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=90,
+            start_new_session=True,
         )
+        try:
+            stdout, stderr = process.communicate(timeout=90)
+        finally:
+            # CLI startup may spawn package installers; stop them before deleting their cache.
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+        result = subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
         assert len(requests) == expected, result.stderr + result.stdout
         assert all(request["model"] == "mock" for request in requests)
         assert all(request["messages"] == requests[0]["messages"] for request in requests)
