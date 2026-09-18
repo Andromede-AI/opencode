@@ -6,6 +6,10 @@ and backports https://github.com/anomalyco/opencode/pull/44517 (commits
 `b870c14b3422dfa5ec42bf650c475fc948533817`). It adds configuration without changing
 upstream retry defaults or the agent harness.
 
+The executable reports `1.18.25+andromede.1`. The suffix is SemVer build metadata,
+so OpenCode can still resolve its official `@opencode-ai/plugin@1.18.25` runtime
+dependency; the custom executable is published only as a GitHub release asset.
+
 ```json
 {
   "autoupdate": false,

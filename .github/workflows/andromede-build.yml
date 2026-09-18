@@ -1,7 +1,7 @@
 name: Andromede OpenCode
 on:
   push:
-    tags: ['v*-andromede.*']
+    tags: ['v*+andromede.*']
   workflow_dispatch:
 permissions:
   contents: read
