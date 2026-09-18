@@ -93,6 +93,7 @@ def verify(binary, tmp_path, retries, expected):
 if __name__ == "__main__":
     binary = Path(sys.argv[1]).resolve()
     for retries, expected in [(None, 6), (0, 1), (12, 13)]:
-        with tempfile.TemporaryDirectory(prefix="opencode-retry-") as root:
+        # Detached dependency installers can outlive the CLI; the CI runner owns leftover cache cleanup.
+        with tempfile.TemporaryDirectory(prefix="opencode-retry-", ignore_cleanup_errors=True) as root:
             verify(binary, Path(root), retries, expected)
         print(f"maxRetries={retries}: {expected} calls in one session")
