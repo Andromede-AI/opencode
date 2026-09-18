@@ -1,0 +1,92 @@
+name: Andromede OpenCode
+on:
+  push:
+    branches: [andromede]
+    tags: ['v*-andromede.*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x64
+            suffix: -baseline
+            flags: --baseline
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+            suffix: ''
+            flags: ''
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: npm install --global node-gyp@11.5.0
+      - run: bun install --frozen-lockfile
+      - name: Test retry policy and config
+        working-directory: packages/opencode
+        run: bun run test test/session/retry.test.ts test/config
+      - run: bun run --cwd packages/core typecheck
+      - run: bun run --cwd packages/opencode typecheck
+      - name: Build pinned executable
+        env:
+          BUILD_FLAGS: ${{ matrix.flags }}
+          BUILD_SUFFIX: ${{ matrix.suffix }}
+          BUILD_ARCH: ${{ matrix.arch }}
+        run: |
+          export OPENCODE_VERSION="$(cat andromede/version)"
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            test "$GITHUB_REF_NAME" = "v$OPENCODE_VERSION"
+          fi
+          export MODELS_DEV_API_JSON="$RUNNER_TEMP/models.json"
+          curl --fail --location --retry 3 https://models.dev/api.json -o "$MODELS_DEV_API_JSON"
+          bun run packages/opencode/script/build.ts --single --skip-install --skip-embed-web-ui $BUILD_FLAGS
+          mkdir -p release staging
+          cp "packages/opencode/dist/opencode-linux-$BUILD_ARCH$BUILD_SUFFIX/bin/opencode" staging/opencode
+          cp LICENSE ANDROMEDE.md staging/
+          test "$(staging/opencode --version)" = "$OPENCODE_VERSION"
+          python3 andromede/verify.py staging/opencode
+          tar -czf "release/opencode-linux-$BUILD_ARCH.tar.gz" -C staging opencode LICENSE ANDROMEDE.md
+          sha256sum "release/opencode-linux-$BUILD_ARCH.tar.gz" | sed 's|release/||' > "release/SHA256SUMS-$BUILD_ARCH"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          snapshot = pathlib.Path(os.environ['MODELS_DEV_API_JSON'])
+          record = dict(version=os.environ['OPENCODE_VERSION'], commit=os.environ['GITHUB_SHA'],
+                        bun=subprocess.check_output(['bun', '--version'], text=True).strip(),
+                        models_sha256=hashlib.sha256(snapshot.read_bytes()).hexdigest())
+          pathlib.Path('release/build-' + os.environ['BUILD_ARCH'] + '.json').write_text(json.dumps(record, indent=2) + '\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: opencode-${{ matrix.arch }}
+          path: release/*
+          retention-days: 14
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: opencode-*
+          merge-multiple: true
+          path: release
+      - name: Publish immutable version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat release/SHA256SUMS-* > release/SHA256SUMS
+          (cd release && sha256sum --check SHA256SUMS)
+          gh release create "$GITHUB_REF_NAME" release/* --verify-tag --title "OpenCode $GITHUB_REF_NAME (Andromede)" --notes-file ANDROMEDE.md
