@@ -90,8 +90,35 @@ def verify(binary, tmp_path, retries, expected):
         thread.join(timeout=5)
 
 
+TIMER_PROBE = (
+    "const start = Date.now();"
+    "setTimeout(() => console.log(Date.now() - start), 2000)"
+)
+
+
+def verify_timer_clock(binary):
+    """Timers must follow the kernel clock.
+
+    Bun 1.3.14 drives JS timers from rdtsc, scaled by the frequency in CPUID leaf 0x15.
+    On VMs whose guest TSC runs at another rate (GCP Sapphire Rapids reports 1900 MHz
+    for a 2700 MHz TSC) every timer fires at 0.70x its delay, including the shell
+    tool's command timeout. The probe only reproduces on such hosts, so the embedded
+    Bun version is pinned as well.
+    """
+    environment = {**os.environ, "BUN_BE_BUN": "1"}
+    version = subprocess.check_output([str(binary), "--version"], env=environment, text=True).strip()
+    assert version != "1.3.14", "Bun 1.3.14 timers ignore the kernel clock"
+    elapsed = int(
+        subprocess.check_output([str(binary), "-e", TIMER_PROBE], env=environment, text=True, timeout=30).strip()
+    )
+    assert 1950 <= elapsed <= 3000, f"setTimeout(2000) fired after {elapsed} ms"
+    return version, elapsed
+
+
 if __name__ == "__main__":
     binary = Path(sys.argv[1]).resolve()
+    bun, elapsed = verify_timer_clock(binary)
+    print(f"embedded Bun {bun}: setTimeout(2000) fired after {elapsed} ms")
     for retries, expected in [(None, 6), (0, 1), (12, 13)]:
         # Detached dependency installers can outlive the CLI; the CI runner owns leftover cache cleanup.
         with tempfile.TemporaryDirectory(prefix="opencode-retry-", ignore_cleanup_errors=True) as root:
